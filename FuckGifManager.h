@@ -8,12 +8,10 @@
 #import "AwemeHeaders.h"
 
 @interface FuckGifManager : NSObject
-
+  
 + (instancetype)shared;
-+ (UIWindow *)getActiveWindow;
 + (void)showToast:(NSString *)text;
 + (void)saveMedia:(NSURL *)mediaURL mediaType:(MediaType)mediaType completion:(void (^)(void))completion;
 + (void)downloadMedia:(NSURL *)url mediaType:(MediaType)mediaType completion:(void (^)(void))completion;
-+ (void)convertHeicToGif:(NSURL *)heicURL completion:(void (^)(NSURL *gifURL, BOOL success))completion;
 
 @end 
