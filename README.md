@@ -44,14 +44,14 @@
 ```
 \# 安装Theos
 
-[https](https://theos.dev/)[:](https://theos.dev/)[//theos.dev/](https://theos.dev/)
+https://theos.dev/
 
 \# 执行命令
 
 make package
 ```
 
-### 👨💻 **开发者信息**
+### 💻 **开发者信息**
 
 @曲奇的坏品味🍻
 
