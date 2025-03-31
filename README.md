@@ -17,9 +17,9 @@
 
 
 ### 🌟 **功能使用**
-| **长按保存**到相册                            | 📱 预览图  |
-| **格式转换**自动转换为 GIF                    | 🔄 流程图  |
-| **系统兼容**Trollfools注入和越狱设备（ios13+） | 📱 兼容预览 |
+**长按保存**到相册
+**格式转换**自动转换为 GIF
+**系统兼容**Trollfools注入和越狱设备（ios13+）
 
 
 ### 🛠 **技术概览**
@@ -54,4 +54,7 @@ make package
 GitHub: [https://github.com/c00kiec00k](https://github.com/c00kiec00k)
 
 Telegram: [https://t.me/c00kiec00k](https://t.me/c00kiec00k)
+
+
+
 
