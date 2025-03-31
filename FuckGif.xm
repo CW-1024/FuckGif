@@ -11,6 +11,16 @@
 
 // 全局变量，用于控制下载选项
 static BOOL isDownloadFlied = NO;
+// 添加防重复下载标记
+static NSMutableSet *downloadingURLs;
+// 添加下载队列管理
+static dispatch_queue_t downloadQueue;
+// 添加活动下载计数
+static NSUInteger activeDownloads = 0;
+// 最大并行下载数
+static const NSUInteger MAX_CONCURRENT_DOWNLOADS = 3;
+// 下载计数器锁
+static NSLock *downloadCountLock;
 
 // 初始化钩子，确保功能自动启用
 %ctor {
@@ -18,8 +28,84 @@ static BOOL isDownloadFlied = NO;
     [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"DYYYFourceDownloadEmotion"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     
-    // 输出日志，帮助调试
-    NSLog(@"[FuckGif] 插件已初始化，表情包自动保存已启用");
+    // 初始化防重复下载集合
+    downloadingURLs = [NSMutableSet new];
+    
+    // 创建专用的串行下载队列
+    downloadQueue = dispatch_queue_create("com.c00kiec00k.fuckgif.download_queue", DISPATCH_QUEUE_SERIAL);
+    
+    // 创建下载计数锁
+    downloadCountLock = [[NSLock alloc] init];
+}
+
+// 辅助函数：管理下载计数
+static void incrementActiveDownloads(void) {
+    [downloadCountLock lock];
+    activeDownloads++;
+    [downloadCountLock unlock];
+}
+
+static void decrementActiveDownloads(void) {
+    [downloadCountLock lock];
+    if (activeDownloads > 0) {
+        activeDownloads--;
+    }
+    [downloadCountLock unlock];
+}
+
+static NSUInteger getActiveDownloads(void) {
+    [downloadCountLock lock];
+    NSUInteger count = activeDownloads;
+    [downloadCountLock unlock];
+    return count;
+}
+
+// 辅助函数：下载表情包并防止重复下载
+static void downloadStickerIfNeeded(AWEIMStickerModel *sticker) {
+    if (!sticker) return;
+    
+    @autoreleasepool {
+        AWEURLModel *staticURLModel = [sticker staticURLModel];
+        if (!staticURLModel) return;
+        
+        NSArray *originURLList = [staticURLModel originURLList];
+        if (!originURLList || originURLList.count == 0) return;
+        
+        NSString *urlString = originURLList[0];
+        
+        // 检查是否正在下载此URL
+        @synchronized(downloadingURLs) {
+            if ([downloadingURLs containsObject:urlString]) {
+                return;
+            }
+            
+            // 添加到正在下载集合
+            [downloadingURLs addObject:urlString];
+        }
+        
+        // 入队下载任务
+        dispatch_async(downloadQueue, ^{
+            // 检查活动下载数量，如超过限制则等待
+            while (getActiveDownloads() >= MAX_CONCURRENT_DOWNLOADS) {
+                [NSThread sleepForTimeInterval:0.1];
+            }
+            
+            // 增加活动下载计数
+            incrementActiveDownloads();
+            
+            NSURL *heifURL = [NSURL URLWithString:urlString];
+            
+            [FuckGifManager downloadMedia:heifURL mediaType:MediaTypeHeic completion:^{
+                // 完成后从集合中移除
+                @synchronized(downloadingURLs) {
+                    [downloadingURLs removeObject:urlString];
+                }
+                
+                // 减少活动下载计数
+                decrementActiveDownloads();
+            }];
+        });
+    }
 }
 
 // 第一种方法：拦截SaveImageElement的方法
@@ -27,84 +113,67 @@ static BOOL isDownloadFlied = NO;
 
 // 确保表情包保存选项可见
 -(BOOL)elementShouldShow {
-    AWECommentLongPressPanelContext *commentPageContext = [self commentPageContext];
-    if (!commentPageContext) {
-        NSLog(@"[FuckGif] commentPageContext为空");
-        return %orig;
-    }
-    
-    AWECommentModel *selectdComment = [commentPageContext selectdComment];
-    if(!selectdComment) {
-        AWECommentLongPressPanelParam *params = [commentPageContext params];
-        if (params) {
-            selectdComment = [params selectdComment];
+    @autoreleasepool {
+        AWECommentLongPressPanelContext *commentPageContext = [self commentPageContext];
+        if (!commentPageContext) {
+            return %orig;
         }
-    }
-    
-    if (!selectdComment) {
-        NSLog(@"[FuckGif] selectdComment为空");
-        return %orig;
-    }
-    
-    AWEIMStickerModel *sticker = [selectdComment sticker];
-    if(sticker) {
-        AWEURLModel *staticURLModel = [sticker staticURLModel];
-        if (staticURLModel) {
-            NSArray *originURLList = [staticURLModel originURLList];
-            if (originURLList && originURLList.count > 0) {
-                NSLog(@"[FuckGif] 检测到表情包，显示保存选项");
-                return YES;
+        
+        AWECommentModel *selectdComment = [commentPageContext selectdComment];
+        if(!selectdComment) {
+            AWECommentLongPressPanelParam *params = [commentPageContext params];
+            if (params) {
+                selectdComment = [params selectdComment];
             }
         }
+        
+        if (!selectdComment) {
+            return %orig;
+        }
+        
+        AWEIMStickerModel *sticker = [selectdComment sticker];
+        if(sticker) {
+            AWEURLModel *staticURLModel = [sticker staticURLModel];
+            if (staticURLModel) {
+                NSArray *originURLList = [staticURLModel originURLList];
+                if (originURLList && originURLList.count > 0) {
+                    return YES;
+                }
+            }
+        }
+        return %orig;
     }
-    return %orig;
 }
 
 -(void)elementTapped {
-    NSLog(@"[FuckGif] SaveImageElement 被点击");
-    AWECommentLongPressPanelContext *commentPageContext = [self commentPageContext];
-    if (!commentPageContext) {
-        %orig;
-        return;
-    }
-    
-    AWECommentModel *selectdComment = [commentPageContext selectdComment];
-    if(!selectdComment) {
-        AWECommentLongPressPanelParam *params = [commentPageContext params];
-        if (params) {
-            selectdComment = [params selectdComment];
+    @autoreleasepool {
+        AWECommentLongPressPanelContext *commentPageContext = [self commentPageContext];
+        if (!commentPageContext) {
+            %orig;
+            return;
         }
-    }
-    
-    if (!selectdComment) {
-        %orig;
-        return;
-    }
-    
-    AWEIMStickerModel *sticker = [selectdComment sticker];
-    if(sticker) {
-        AWEURLModel *staticURLModel = [sticker staticURLModel];
-        if (staticURLModel) {
-            NSArray *originURLList = [staticURLModel originURLList];
-            if (originURLList && originURLList.count > 0) {
-                NSString *urlString = @"";
-                if(isDownloadFlied) {
-                    urlString = originURLList[originURLList.count-1];
-                    isDownloadFlied = NO;
-                } else {
-                    urlString = originURLList[0];
-                }
-
-                NSURL *heifURL = [NSURL URLWithString:urlString];
-                NSLog(@"[FuckGif] 开始下载表情包: %@", urlString);
-                [FuckGifManager downloadMedia:heifURL mediaType:MediaTypeHeic completion:^{
-                    [FuckGifManager showToast:@"表情包已保存到相册"];
-                }];
-                return;
+        
+        AWECommentModel *selectdComment = [commentPageContext selectdComment];
+        if(!selectdComment) {
+            AWECommentLongPressPanelParam *params = [commentPageContext params];
+            if (params) {
+                selectdComment = [params selectdComment];
             }
         }
+        
+        if (!selectdComment) {
+            %orig;
+            return;
+        }
+        
+        AWEIMStickerModel *sticker = [selectdComment sticker];
+        if(sticker) {
+            // 使用辅助函数下载表情包
+            downloadStickerIfNeeded(sticker);
+            return;
+        }
+        %orig;
     }
-    %orig;
 }
 %end
 
@@ -112,7 +181,6 @@ static BOOL isDownloadFlied = NO;
 %hook _TtC33AWECommentLongPressPanelSwiftImpl32CommentLongPressPanelCopyElement
 
 -(void)elementTapped {
-    NSLog(@"[FuckGif] CopyElement 被点击");
     // 直接执行原始方法，不尝试获取commentPageContext
     %orig;
 }
@@ -121,24 +189,13 @@ static BOOL isDownloadFlied = NO;
 // 第三种方法：尝试拦截所有表情包点击
 %hook AWEIMStickerModel
 
-// 当表情包被点击时自动保存傻逼GIF
+// 当表情包被点击时自动保存
 - (void)didTap {
     %orig;
     
-    NSLog(@"[FuckGif] 检测到表情包被点击");
-    
-    AWEURLModel *staticURLModel = [self staticURLModel];
-    if (staticURLModel) {
-        NSArray *originURLList = [staticURLModel originURLList];
-        if (originURLList && originURLList.count > 0) {
-            NSString *urlString = originURLList[0];
-            NSURL *heifURL = [NSURL URLWithString:urlString];
-            NSLog(@"[FuckGif] 自动下载表情包: %@", urlString);
-            
-            [FuckGifManager downloadMedia:heifURL mediaType:MediaTypeHeic completion:^{
-                [FuckGifManager showToast:@"表情包已保存到相册"];
-            }];
-        }
+    // 使用辅助函数下载表情包
+    @autoreleasepool {
+        downloadStickerIfNeeded(self);
     }
 }
 
